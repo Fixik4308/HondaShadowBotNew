@@ -312,10 +312,7 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
-
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        # Якщо цикл вже працює (типово для Render)
-        loop.create_task(main())
-    else:
-        loop.run_until_complete(main())
+    try:
+        asyncio.get_running_loop().create_task(main())
+    except RuntimeError:
+        asyncio.run(main())
