@@ -311,9 +311,5 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    import threading
     import asyncio
-
-    def run():
-        asyncio.run(main())
-    threading.Thread(target=run).start()
+    asyncio.run(main())
