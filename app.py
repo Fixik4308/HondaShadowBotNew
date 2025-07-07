@@ -311,17 +311,9 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
+    import threading
     import asyncio
-    import sys
 
-    try:
+    def run():
         asyncio.run(main())
-    except RuntimeError as e:
-        # Хак для Render + PTB + Python 3.13
-        if "already running" in str(e) or "Cannot close a running event loop" in str(e):
-            loop = asyncio.get_event_loop()
-            task = loop.create_task(main())
-            loop.run_until_complete(task)
-        else:
-            print("RuntimeError:", e, file=sys.stderr)
-            raise
+    threading.Thread(target=run).start()
