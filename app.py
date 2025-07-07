@@ -311,12 +311,11 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.create_task(main())
-            loop.run_forever()
-        else:
-            raise
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        # Якщо цикл вже працює (типово для Render)
+        loop.create_task(main())
+    else:
+        loop.run_until_complete(main())
