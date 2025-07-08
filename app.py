@@ -342,10 +342,14 @@ async def start_web():
     app = web.Application()
     app.add_routes([web.post("/esp32_push", esp32_push)])
     runner = web.AppRunner(app)
+    async def start_web():
+    app = web.Application()
+    app.add_routes([web.post("/esp32_push", esp32_push)])
+    runner = web.AppRunner(app)
     await runner.setup()
     import os
-port = int(os.environ.get("PORT", 8080))
-site = web.TCPSite(runner, "0.0.0.0", port)
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     while True:
         await asyncio.sleep(3600)
