@@ -332,6 +332,10 @@ async def esp32_push(request):
     except Exception as e:
         return web.json_response({"status": "error", "detail": str(e)}, status=400)
 
+# ДОДАЙ ОТУТ:
+async def index(request):
+    return web.Response(text="HondaShadowBot is running!", content_type='text/plain')
+# ---------- ГОЛОВНИЙ ЗАПУСК (aiohttp + aiogram разом) ----------
 # ---------- ГОЛОВНИЙ ЗАПУСК (aiohttp + aiogram разом) ----------
 import asyncio
 
@@ -340,10 +344,12 @@ async def start_polling():
 
 async def start_web():
     app = web.Application()
-    app.add_routes([web.post("/esp32_push", esp32_push)])
+    app.add_routes([
+        web.post("/esp32_push", esp32_push),
+        web.get("/", index)      # тепер тут все ок!
+    ])
     runner = web.AppRunner(app)
     await runner.setup()
-    import os
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
