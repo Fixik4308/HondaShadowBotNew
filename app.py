@@ -340,7 +340,6 @@ async def esp32_push(request):
     try:
         data = await request.json()
         data["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-	print('Дані від ESP32:', data)
         save_data(data)
         return web.json_response({"status": "ok"})
     except Exception as e:
