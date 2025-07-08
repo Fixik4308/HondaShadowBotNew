@@ -23,6 +23,7 @@ PIN_CODE = os.getenv("PIN_CODE")  # наприклад: '1234'
 
 DATA_FILE = "esp32_data.json"
 SERVICE_FILE = "service_status.json"
+COMMANDS_FILE = "commands.json"  # Додаємо файл для зберігання команд
 
 logging.basicConfig(level=logging.INFO)
 
@@ -68,6 +69,18 @@ def load_service():
 def save_service(service):
     with open(SERVICE_FILE, "w") as f:
         json.dump(service, f, ensure_ascii=False, indent=2)
+
+# ---------- ХЕЛПЕРИ ДЛЯ КОМАНД (ESP32) ----------
+def load_commands():
+    try:
+        with open(COMMANDS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_commands(cmds):
+    with open(COMMANDS_FILE, "w") as f:
+        json.dump(cmds, f, ensure_ascii=False, indent=2)
 
 # ---------- КНОПКИ ----------
 def main_menu():
@@ -235,7 +248,7 @@ async def process_ignite_pin(msg: types.Message, state: FSMContext):
     if msg.text == PIN_CODE:
         await state.clear()
         await msg.answer("🔑 Запалення увімкнено!", reply_markup=main_menu())
-        # Тут можна викликати функцію для ESP32
+        # Тут можна викликати функцію для ESP32 (через команди)
     else:
         await msg.answer("❌ Невірний PIN! Спробуйте ще раз або ⬅️ Відмінити.", reply_markup=cancel_menu())
 
@@ -253,7 +266,7 @@ async def process_starter_pin(msg: types.Message, state: FSMContext):
     if msg.text == PIN_CODE:
         await state.clear()
         await msg.answer("🗝 Двигун заведено!", reply_markup=main_menu())
-        # Тут можна викликати функцію для ESP32
+        # Тут можна викликати функцію для ESP32 (через команди)
     else:
         await msg.answer("❌ Невірний PIN! Спробуйте ще раз або ⬅️ Відмінити.", reply_markup=cancel_menu())
 
@@ -332,10 +345,35 @@ async def esp32_push(request):
     except Exception as e:
         return web.json_response({"status": "error", "detail": str(e)}, status=400)
 
+# ---------- ESP32 COMMANDS API ----------
+async def esp32_commands(request):
+    device_id = request.query.get("device_id")
+    all_cmds = load_commands()
+    cmds = all_cmds.get(device_id, [])
+    return web.json_response({"commands": cmds})
+
+async def esp32_ack_command(request):
+    try:
+        body = await request.json()
+        device_id = body.get("device_id")
+        command_id = body.get("command_id")
+        if not device_id or command_id is None:
+            return web.json_response({"status": "error", "detail": "No device_id or command_id"}, status=400)
+
+        all_cmds = load_commands()
+        device_cmds = all_cmds.get(device_id, [])
+        # Видаляємо команду з цим id
+        device_cmds = [c for c in device_cmds if c.get("id") != command_id]
+        all_cmds[device_id] = device_cmds
+        save_commands(all_cmds)
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        return web.json_response({"status": "error", "detail": str(e)}, status=400)
+
 # ДОДАЙ ОТУТ:
 async def index(request):
     return web.Response(text="HondaShadowBot is running!", content_type='text/plain')
-# ---------- ГОЛОВНИЙ ЗАПУСК (aiohttp + aiogram разом) ----------
+
 # ---------- ГОЛОВНИЙ ЗАПУСК (aiohttp + aiogram разом) ----------
 import asyncio
 
@@ -346,7 +384,9 @@ async def start_web():
     app = web.Application()
     app.add_routes([
         web.post("/esp32_push", esp32_push),
-        web.get("/", index)      # тепер тут все ок!
+        web.get("/esp32_push/commands", esp32_commands),
+        web.post("/esp32_push/commands/ack", esp32_ack_command),
+        web.get("/", index)
     ])
     runner = web.AppRunner(app)
     await runner.setup()
