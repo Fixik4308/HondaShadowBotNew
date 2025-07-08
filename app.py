@@ -1,409 +1,390 @@
-import logging
-import json
 import os
+import sqlite3
+import json
+import requests
+import logging
+import pytz
 from datetime import datetime, timedelta
 
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
-
-import aiohttp
-from dotenv import load_dotenv
-
-# ---------- ЗАВАНТАЖЕННЯ СЕКРЕТІВ ----------
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
-PIN_CODE = os.getenv("PIN_CODE")  # наприклад: '1234'
-
-DATA_FILE = "esp32_data.json"
-SERVICE_FILE = "service_status.json"
-COMMANDS_FILE = "commands.json"  # Додаємо файл для зберігання команд
-
-logging.basicConfig(level=logging.INFO)
-
-# ---------- FSM STATES ----------
-class RefuelStates(StatesGroup):
-    waiting_liters = State()
-
-class PinStates(StatesGroup):
-    waiting_pin_ignite = State()
-    waiting_pin_starter = State()
-
-# ---------- ІНІЦІАЛІЗАЦІЯ ----------
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+from flask import Flask, request, jsonify
+from apscheduler.schedulers.background import BackgroundScheduler
+from telegram import (
+    Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton,
+    InlineKeyboardButton, InlineKeyboardMarkup
 )
-dp = Dispatcher(storage=MemoryStorage())
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, filters,
+    ContextTypes, ConversationHandler, CallbackQueryHandler
+)
 
-# ---------- ХЕЛПЕРИ ДЛЯ ЗБЕРІГАННЯ ----------
-def load_data():
+# ==========  CONFIG  ==========
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "7997519934:AAGuQH9UbjnTytxe9iGe5m53xXiwdImI8p0")
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "587618394"))
+ESP32_DEVICE_ID = os.getenv("ESP32_DEVICE_ID", "fixik4308")
+MASTER_PIN = os.getenv("MASTER_PIN", "8748")
+OPENWEATHER_API = os.getenv("OPENWEATHER_API", "1fc7aa0291a70d68f04424895faf1f5a")
+TIMEZONE = os.getenv("TZ", "Europe/Kyiv")
+DB_FILE = "hondashadow.db"
+
+# ==========  FLASK APP ==========
+app = Flask(__name__)
+bot_app = None  # set later after Application init
+
+# ==========  DATABASE  ==========
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Телеметрія
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS telemetry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            device_id TEXT,
+            engine_temperature REAL,
+            air_temperature REAL,
+            latitude REAL,
+            longitude REAL,
+            fuel_pulses INTEGER,
+            fuel_liters REAL
+        )
+    ''')
+    # Налаштування (наприклад, ПІН, нагадування, пробіг)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    # Команди для ESP32
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS commands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT,
+            command_type TEXT,
+            value TEXT,
+            executed INTEGER DEFAULT 0
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_telemetry(data):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO telemetry (
+            device_id, engine_temperature, air_temperature,
+            latitude, longitude, fuel_pulses, fuel_liters
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        data.get('device_id'), data.get('engine_temperature'),
+        data.get('air_temperature'), data.get('latitude'),
+        data.get('longitude'), data.get('fuel_pulses'),
+        data.get('fuel_liters')
+    ))
+    conn.commit()
+    conn.close()
+
+def get_last_telemetry():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT * FROM telemetry ORDER BY id DESC LIMIT 1')
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "timestamp": row[1],
+        "device_id": row[2],
+        "engine_temperature": row[3],
+        "air_temperature": row[4],
+        "latitude": row[5],
+        "longitude": row[6],
+        "fuel_pulses": row[7],
+        "fuel_liters": row[8]
+    }
+
+def add_command(cmd_type, value=""):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO commands (device_id, command_type, value, executed)
+        VALUES (?, ?, ?, 0)
+    ''', (ESP32_DEVICE_ID, cmd_type, value))
+    conn.commit()
+    conn.close()
+
+def get_unexecuted_commands():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        SELECT id, command_type, value FROM commands
+        WHERE executed=0 AND device_id=?
+    ''', (ESP32_DEVICE_ID,))
+    rows = c.fetchall()
+    conn.close()
+    cmds = []
+    for row in rows:
+        cmds.append({
+            "id": row[0],
+            "command_type": row[1],
+            "value": row[2]
+        })
+    return cmds
+
+def ack_command(command_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('UPDATE commands SET executed=1 WHERE id=?', (command_id,))
+    conn.commit()
+    conn.close()
+
+def save_setting(key, value):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, str(value)))
+    conn.commit()
+    conn.close()
+
+def get_setting(key, default=None):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT value FROM settings WHERE key=?', (key,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+# ==========  WEATHER  ==========
+def get_weather(lat, lon):
     try:
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&units=metric&lang=ua&appid={OPENWEATHER_API}"
+        r = requests.get(url)
+        w = r.json()
+        return f"🌤 {w['weather'][0]['description'].capitalize()}, {w['main']['temp']}°C, Вологість: {w['main']['humidity']}%"
+    except Exception as e:
+        return "⚠️ Не вдалося отримати погоду."
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+# ==========  TELEGRAM BOT ==========
 
-def load_service():
-    try:
-        with open(SERVICE_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {
-            "oil_km": 0,
-            "chain_km": 0,
-            "oil_last": str(datetime.now().date()),
-            "chain_last": str(datetime.now().date())
-        }
+START_MENU = [
+    [KeyboardButton("📊 Статус"), KeyboardButton("⛽ Залишок"), KeyboardButton("🛢 Заправився")],
+    [KeyboardButton("🌤 Погода"), KeyboardButton("⚙️ Управління"), KeyboardButton("🧰 ТО")]
+]
+MANAGE_MENU = [
+    [KeyboardButton("🔑 Увімкнути запалення"), KeyboardButton("🗝 Завести двигун")],
+    [KeyboardButton("🛑 Заглушити двигун"), KeyboardButton("🚫 Вимкнути запалення")],
+    [KeyboardButton("⬅️ Назад")]
+]
+SERVICE_MENU = [
+    [KeyboardButton("ℹ️ Нагадування")],
+    [KeyboardButton("✅ Змастив цеп"), KeyboardButton("✅ Замінив масло")],
+    [KeyboardButton("⬅️ Назад")]
+]
 
-def save_service(service):
-    with open(SERVICE_FILE, "w") as f:
-        json.dump(service, f, ensure_ascii=False, indent=2)
-
-# ---------- ХЕЛПЕРИ ДЛЯ КОМАНД (ESP32) ----------
-def load_commands():
-    try:
-        with open(COMMANDS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def save_commands(cmds):
-    with open(COMMANDS_FILE, "w") as f:
-        json.dump(cmds, f, ensure_ascii=False, indent=2)
-
-# ---------- КНОПКИ ----------
-def main_menu():
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📊 Статус"), KeyboardButton(text="⛽ Залишок")],
-            [KeyboardButton(text="🛢 Заправився"), KeyboardButton(text="🌤 Погода")],
-            [KeyboardButton(text="⚙️ Управління"), KeyboardButton(text="🧰 ТО")]
-        ],
-        resize_keyboard=True
-    )
-    return kb
-
-def management_menu():
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🔑 Увімкнути запалення"), KeyboardButton(text="🗝 Завести двигун")],
-            [KeyboardButton(text="🛑 Заглушити двигун"), KeyboardButton(text="🚫 Вимкнути запалення")],
-            [KeyboardButton(text="⬅️ Назад")]
-        ],
-        resize_keyboard=True
-    )
-    return kb
-
-def service_menu():
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="ℹ️ Нагадування")],
-            [KeyboardButton(text="✅ Змастив цеп"), KeyboardButton(text="✅ Замінив масло")],
-            [KeyboardButton(text="⬅️ Назад")]
-        ],
-        resize_keyboard=True
-    )
-    return kb
-
-def cancel_menu():
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="⬅️ Відмінити")]
-        ],
-        resize_keyboard=True
-    )
-    return kb
-
-# ---------- ДОПОМОЖНІ ФУНКЦІЇ ----------
-def get_status_text(data, service):
+def make_status_text(data):
     if not data:
-        return "<b>Даних ще немає!</b>"
-
-    offline = ""
-    last_update = data.get("last_update")
-    if last_update:
-        dt = datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")
-        if datetime.now() - dt > timedelta(minutes=3):
-            offline = "\n⚠️ <b>ESP32 недоступна (немає даних більше 3х хв)</b>\n"
-
-    status = (
-        f"🔋 <b>Статус мотоцикла</b>:\n"
-        f"🌡 Температура двигуна: <b>{data.get('engine_temp', '---')}°C</b>\n"
-        f"🌡 Температура повітря: <b>{data.get('air_temp', '---')}°C</b>\n"
-        f"⛽ Залишок пального: <b>{data.get('fuel_left', '---')} л</b>\n"
-        f"🚗 Пробіг (заг.): <b>{data.get('odo_total', '---')} км</b>\n"
-        f"📆 Пробіг за день: <b>{data.get('odo_day', '---')} км</b>\n"
-        f"🕑 Пробіг за сесію: <b>{data.get('odo_session', '---')} км</b>\n"
-        f"⚡ Середня витрата: <b>{data.get('avg_consumption', '---')} л/100км</b>\n"
-        f"🔋 Залишок ходу: <b>{data.get('range_left', '---')} км</b>\n"
-        f"📍 GPS: {data.get('lat', '---')}, {data.get('lon', '---')}\n"
-        f"{offline}"
-        f"\n🧰 <b>ТО</b>:\n"
-        f"🛢 Масло: вост. <b>{service.get('oil_km', 0)} км</b>, остання заміна: {service.get('oil_last', '-')}\n"
-        f"⛓ Цеп: вост. <b>{service.get('chain_km', 0)} км</b>, остання змазка: {service.get('chain_last', '-')}\n"
+        return "❌ Дані ще не надійшли від пристрою."
+    text = (
+        f"📊 <b>СТАТУС МОТО:</b>\n"
+        f"🛠 <b>Двигун:</b> {data['engine_temperature']}°C\n"
+        f"🌡 <b>Повітря:</b> {data['air_temperature']}°C\n"
+        f"⛽ <b>Залишок пального:</b> {data['fuel_liters']} л\n"
+        f"🏁 <b>Координати:</b> {data['latitude']:.5f}, {data['longitude']:.5f}\n"
+        f"📍 <b>Карта:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
     )
-    return status
+    return text
 
-async def get_weather(lat, lon):
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=ua"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                w = await resp.json()
-                text = (
-                    f"🌤 <b>Погода зараз</b>:\n"
-                    f"Температура: <b>{w['main']['temp']}°C</b>\n"
-                    f"Відчувається як: <b>{w['main']['feels_like']}°C</b>\n"
-                    f"Тиск: <b>{w['main']['pressure']} гПа</b>\n"
-                    f"Вологість: <b>{w['main']['humidity']}%</b>\n"
-                    f"Опис: <b>{w['weather'][0]['description'].capitalize()}</b>"
-                )
-                return text
-            return "Помилка отримання погоди"
-
-# ---------- ОБРОБНИКИ КОМАНД/КНОПОК ----------
-@dp.message(Command("start"))
-async def cmd_start(msg: types.Message, state: FSMContext):
-    await state.clear()
-    await msg.answer(
-        "👋 Вітаю! Я Honda Shadow ESP32 бот.\n"
-        "Обери команду з меню або /help для всіх команд.",
-        reply_markup=main_menu()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Вітаю! Я HondaShadow ESP32 бот.\nОбери команду:",
+        reply_markup=ReplyKeyboardMarkup(START_MENU, resize_keyboard=True)
     )
 
-@dp.message(Command("help"))
-async def cmd_help(msg: types.Message, state: FSMContext):
-    await msg.answer(
-        "<b>Список команд:</b>\n"
-        "/status – Вся інфо\n"
-        "/location – Координати\n"
-        "/refuel 5 – Додати 5 л\n"
-        "/service_oil_reset – Скинути лічильник масла\n"
-        "/service_chain_reset – Скинути лічильник ланцюга\n"
-        "/ignite – Увімкнути запалення (з PIN)\n"
-        "/starter – Стартер (з PIN)\n"
-        "/stop – Вимкнути запалення/стартер\n"
-        "/help – Цей список"
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Доступні команди:\n"
+        "/status — Вся інфо\n"
+        "/location — Координати\n"
+        "/refuel X — Додати X л\n"
+        "/service_oil_reset — Скинути лічильник масла\n"
+        "/service_chain_reset — Скинути лічильник цепу\n"
+        "/ignite — Запалення (ПІН)\n"
+        "/starter — Стартер (ПІН)\n"
+        "/stop — Вимкнути все\n"
+        "/help — Список команд"
     )
 
-@dp.message(Command("status"))
-async def cmd_status(msg: types.Message, state: FSMContext):
-    data = load_data()
-    service = load_service()
-    await msg.answer(get_status_text(data, service))
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_last_telemetry()
+    await update.message.reply_html(make_status_text(data))
 
-@dp.message(Command("location"))
-async def cmd_location(msg: types.Message, state: FSMContext):
-    data = load_data()
-    if data.get("lat") and data.get("lon"):
-        await msg.answer_location(latitude=float(data["lat"]), longitude=float(data["lon"]))
-    else:
-        await msg.answer("GPS координати недоступні.")
-
-# ---------- FSM: Заправка ----------
-@dp.message(F.text == "🛢 Заправився")
-async def m_refuel(msg: types.Message, state: FSMContext):
-    await msg.answer("Введи кількість літрів (наприклад: 5.5) або ⬅️ Відмінити.", reply_markup=cancel_menu())
-    await state.set_state(RefuelStates.waiting_liters)
-
-@dp.message(RefuelStates.waiting_liters)
-async def process_refuel_liters(msg: types.Message, state: FSMContext):
-    if msg.text == "⬅️ Відмінити":
-        await state.clear()
-        await msg.answer("Операцію скасовано.", reply_markup=main_menu())
+async def location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_last_telemetry()
+    if not data:
+        await update.message.reply_text("❌ Дані ще не надійшли.")
         return
+    await update.message.reply_location(data['latitude'], data['longitude'])
+
+async def refuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        liters = float(msg.text.replace(",", "."))
-        data = load_data()
-        data["fuel_left"] = round(data.get("fuel_left", 0) + liters, 2)
-        save_data(data)
-        await state.clear()
-        await msg.answer(f"✅ Додано {liters} л. Новий залишок: {data['fuel_left']} л.", reply_markup=main_menu())
+        liters = float(context.args[0])
+        add_command("refuel", str(liters))
+        await update.message.reply_text(f"✅ Заправка на {liters} л відправлена пристрою.")
     except Exception:
-        await msg.answer("Введіть коректне число. Наприклад: 5.5 або ⬅️ Відмінити.", reply_markup=cancel_menu())
+        await update.message.reply_text("❗️ Використання: /refuel 5")
 
-# ---------- FSM: PIN-код для запалення/стартера ----------
-@dp.message(F.text == "🔑 Увімкнути запалення")
-async def m_ignite(msg: types.Message, state: FSMContext):
-    await msg.answer("Введіть PIN-код або ⬅️ Відмінити.", reply_markup=cancel_menu())
-    await state.set_state(PinStates.waiting_pin_ignite)
+async def ignite(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введіть PIN для запуску запалення:")
+    context.user_data['awaiting_pin'] = 'ignite'
 
-@dp.message(PinStates.waiting_pin_ignite)
-async def process_ignite_pin(msg: types.Message, state: FSMContext):
-    if msg.text == "⬅️ Відмінити":
-        await state.clear()
-        await msg.answer("Операцію скасовано.", reply_markup=main_menu())
-        return
-    if msg.text == PIN_CODE:
-        await state.clear()
-        await msg.answer("🔑 Запалення увімкнено!", reply_markup=main_menu())
-        # Тут можна викликати функцію для ESP32 (через команди)
+async def starter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введіть PIN для запуску стартера:")
+    context.user_data['awaiting_pin'] = 'starter'
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_command("stop_ignition")
+    add_command("stop_starter")
+    await update.message.reply_text("✅ Відправлено: вимкнення запалення та стартера.")
+
+async def service_oil_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_setting('oil_last_reset', datetime.now(pytz.timezone(TIMEZONE)).isoformat())
+    await update.message.reply_text("✅ Лічильник масла скинуто!")
+
+async def service_chain_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    save_setting('chain_last_reset', datetime.now(pytz.timezone(TIMEZONE)).isoformat())
+    await update.message.reply_text("✅ Лічильник ланцюга скинуто!")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == "📊 Статус":
+        await status(update, context)
+    elif text == "⛽ Залишок":
+        data = get_last_telemetry()
+        if data:
+            await update.message.reply_text(f"⛽ {data['fuel_liters']} л")
+        else:
+            await update.message.reply_text("❌ Дані ще не надійшли.")
+    elif text == "🛢 Заправився":
+        await update.message.reply_text("Введіть кількість літрів, наприклад: /refuel 5")
+    elif text == "🌤 Погода":
+        data = get_last_telemetry()
+        if data:
+            weather = get_weather(data['latitude'], data['longitude'])
+            await update.message.reply_text(weather)
+        else:
+            await update.message.reply_text("❌ Дані ще не надійшли.")
+    elif text == "⚙️ Управління":
+        await update.message.reply_text("Меню керування:", reply_markup=ReplyKeyboardMarkup(MANAGE_MENU, resize_keyboard=True))
+    elif text == "🧰 ТО":
+        await update.message.reply_text("Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
+    elif text == "⬅️ Назад":
+        await update.message.reply_text("Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(START_MENU, resize_keyboard=True))
+    elif text == "🔑 Увімкнути запалення":
+        await ignite(update, context)
+    elif text == "🗝 Завести двигун":
+        await starter(update, context)
+    elif text == "🛑 Заглушити двигун":
+        await stop(update, context)
+    elif text == "🚫 Вимкнути запалення":
+        add_command("stop_ignition")
+        await update.message.reply_text("✅ Запалення вимкнено.")
+    elif text == "ℹ️ Нагадування":
+        oil = get_setting('oil_last_reset', 'Ніколи')
+        chain = get_setting('chain_last_reset', 'Ніколи')
+        await update.message.reply_text(f"🛢 Остання заміна масла: {oil}\n🔗 Остання мастка ланцюга: {chain}")
+    elif text == "✅ Змастив цеп":
+        await service_chain_reset(update, context)
+    elif text == "✅ Замінив масло":
+        await service_oil_reset(update, context)
     else:
-        await msg.answer("❌ Невірний PIN! Спробуйте ще раз або ⬅️ Відмінити.", reply_markup=cancel_menu())
+        if context.user_data.get('awaiting_pin'):
+            pin_action = context.user_data.pop('awaiting_pin')
+            if text.strip() == MASTER_PIN:
+                if pin_action == 'ignite':
+                    add_command("start_ignition", MASTER_PIN)
+                    await update.message.reply_text("✅ Запалення ввімкнено!")
+                elif pin_action == 'starter':
+                    add_command("start_starter", MASTER_PIN)
+                    await update.message.reply_text("✅ Стартер ввімкнено!")
+            else:
+                await update.message.reply_text("❌ Невірний PIN.")
+        else:
+            await update.message.reply_text("❓ Невідома команда. Спробуйте /help")
 
-@dp.message(F.text == "🗝 Завести двигун")
-async def m_starter(msg: types.Message, state: FSMContext):
-    await msg.answer("Введіть PIN-код або ⬅️ Відмінити.", reply_markup=cancel_menu())
-    await state.set_state(PinStates.waiting_pin_starter)
+# ==========  ESP32 API ==========
+@app.route('/esp32_push', methods=['POST'])
+def esp32_push():
+    data = request.json
+    save_telemetry(data)
+    return jsonify({"status": "ok"})
 
-@dp.message(PinStates.waiting_pin_starter)
-async def process_starter_pin(msg: types.Message, state: FSMContext):
-    if msg.text == "⬅️ Відмінити":
-        await state.clear()
-        await msg.answer("Операцію скасовано.", reply_markup=main_menu())
-        return
-    if msg.text == PIN_CODE:
-        await state.clear()
-        await msg.answer("🗝 Двигун заведено!", reply_markup=main_menu())
-        # Тут можна викликати функцію для ESP32 (через команди)
-    else:
-        await msg.answer("❌ Невірний PIN! Спробуйте ще раз або ⬅️ Відмінити.", reply_markup=cancel_menu())
+@app.route('/esp32_push/commands', methods=['GET'])
+def esp32_get_commands():
+    device_id = request.args.get('device_id')
+    cmds = get_unexecuted_commands()
+    return jsonify({"commands": cmds})
 
-# ---------- Меню, ТО, Погода, Статус та інше ----------
-@dp.message(F.text == "📊 Статус")
-async def m_status(msg: types.Message, state: FSMContext):
-    data = load_data()
-    service = load_service()
-    await msg.answer(get_status_text(data, service))
+@app.route('/esp32_push/commands/ack', methods=['POST'])
+def esp32_ack_command():
+    data = request.json
+    ack_command(data['command_id'])
+    return jsonify({"status": "acknowledged"})
 
-@dp.message(F.text == "⛽ Залишок")
-async def m_fuel(msg: types.Message, state: FSMContext):
-    data = load_data()
-    await msg.answer(f"⛽ Залишок пального: <b>{data.get('fuel_left', '---')} л</b>")
+# ==========  AUTOREPORT ==========
+def send_daily_report():
+    data = get_last_telemetry()
+    if data:
+        weather = get_weather(data['latitude'], data['longitude'])
+        oil = get_setting('oil_last_reset', 'Ніколи')
+        chain = get_setting('chain_last_reset', 'Ніколи')
+        text = (
+            "🕊 <b>Щоденний звіт</b>\n"
+            + make_status_text(data) + "\n\n"
+            + weather + "\n\n"
+            + f"🛢 Остання заміна масла: {oil}\n🔗 Остання мастка ланцюга: {chain}"
+        )
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(bot_app.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode='HTML'))
+            else:
+                loop.run_until_complete(bot_app.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode='HTML'))
+        except Exception as e:
+            print("❌ Не вдалося надіслати щоденний звіт:", e)
 
-@dp.message(F.text == "🌤 Погода")
-async def m_weather(msg: types.Message, state: FSMContext):
-    data = load_data()
-    lat, lon = data.get("lat"), data.get("lon")
-    if lat and lon:
-        weather = await get_weather(lat, lon)
-        await msg.answer(weather)
-    else:
-        await msg.answer("Координати ще не відомі, неможливо отримати погоду.")
+def setup_scheduler():
+    scheduler = BackgroundScheduler(timezone=TIMEZONE)
+    scheduler.add_job(send_daily_report, 'cron', hour=8, minute=0)
+    scheduler.start()
 
-@dp.message(F.text == "⚙️ Управління")
-async def m_manage(msg: types.Message, state: FSMContext):
-    await msg.answer("Управління:", reply_markup=management_menu())
+# ==========  MAIN ==========
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    init_db()
+    setup_scheduler()
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    bot_app = application
 
-@dp.message(F.text == "⬅️ Назад")
-async def m_back(msg: types.Message, state: FSMContext):
-    await state.clear()
-    await msg.answer("Головне меню:", reply_markup=main_menu())
+    # handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("location", location))
+    application.add_handler(CommandHandler("refuel", refuel))
+    application.add_handler(CommandHandler("ignite", ignite))
+    application.add_handler(CommandHandler("starter", starter))
+    application.add_handler(CommandHandler("stop", stop))
+    application.add_handler(CommandHandler("service_oil_reset", service_oil_reset))
+    application.add_handler(CommandHandler("service_chain_reset", service_chain_reset))
+    application.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-@dp.message(F.text == "🧰 ТО")
-async def m_service(msg: types.Message, state: FSMContext):
-    await msg.answer("ТО:", reply_markup=service_menu())
+    # Flask+PTB in one process (webhook на Heroku/Render, або polling)
+    import threading
+    def run_flask():
+        app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)), threaded=True)
 
-@dp.message(F.text == "ℹ️ Нагадування")
-async def m_reminders(msg: types.Message, state: FSMContext):
-    service = load_service()
-    await msg.answer(
-        f"🛢 Масло: вост. {service.get('oil_km', 0)} км, остання заміна: {service.get('oil_last', '-')}\n"
-        f"⛓ Цеп: вост. {service.get('chain_km', 0)} км, остання змазка: {service.get('chain_last', '-')}"
-    )
-
-@dp.message(F.text == "✅ Змастив цеп")
-async def m_chain_reset(msg: types.Message, state: FSMContext):
-    service = load_service()
-    service["chain_km"] = 0
-    service["chain_last"] = str(datetime.now().date())
-    save_service(service)
-    await msg.answer("✅ Лічильник ланцюга скинуто.")
-
-@dp.message(F.text == "✅ Замінив масло")
-async def m_oil_reset(msg: types.Message, state: FSMContext):
-    service = load_service()
-    service["oil_km"] = 0
-    service["oil_last"] = str(datetime.now().date())
-    save_service(service)
-    await msg.answer("✅ Лічильник масла скинуто.")
-
-@dp.message((F.text == "🛑 Заглушити двигун") | (F.text == "🚫 Вимкнути запалення"))
-async def m_stop(msg: types.Message, state: FSMContext):
-    await msg.answer("✅ Двигун заглушено/запалення вимкнено.", reply_markup=main_menu())
-
-# ---------- ESP32 PUSH API (для отримання даних від ESP32) ----------
-from aiohttp import web
-
-async def esp32_push(request):
-    try:
-        data = await request.json()
-        data["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        save_data(data)
-        return web.json_response({"status": "ok"})
-    except Exception as e:
-        return web.json_response({"status": "error", "detail": str(e)}, status=400)
-
-# ---------- ESP32 COMMANDS API ----------
-async def esp32_commands(request):
-    device_id = request.query.get("device_id")
-    all_cmds = load_commands()
-    cmds = all_cmds.get(device_id, [])
-    return web.json_response({"commands": cmds})
-
-async def esp32_ack_command(request):
-    try:
-        body = await request.json()
-        device_id = body.get("device_id")
-        command_id = body.get("command_id")
-        if not device_id or command_id is None:
-            return web.json_response({"status": "error", "detail": "No device_id or command_id"}, status=400)
-
-        all_cmds = load_commands()
-        device_cmds = all_cmds.get(device_id, [])
-        # Видаляємо команду з цим id
-        device_cmds = [c for c in device_cmds if c.get("id") != command_id]
-        all_cmds[device_id] = device_cmds
-        save_commands(all_cmds)
-        return web.json_response({"status": "ok"})
-    except Exception as e:
-        return web.json_response({"status": "error", "detail": str(e)}, status=400)
-
-# ДОДАЙ ОТУТ:
-async def index(request):
-    return web.Response(text="HondaShadowBot is running!", content_type='text/plain')
-
-# ---------- ГОЛОВНИЙ ЗАПУСК (aiohttp + aiogram разом) ----------
-import asyncio
-
-async def start_polling():
-    await dp.start_polling(bot)
-
-async def start_web():
-    app = web.Application()
-    app.add_routes([
-        web.post("/esp32_push", esp32_push),
-        web.get("/esp32_push/commands", esp32_commands),
-        web.post("/esp32_push/commands/ack", esp32_ack_command),
-        web.get("/", index)
-    ])
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    while True:
-        await asyncio.sleep(3600)
-
-def main():
-    asyncio.run(main_async())
-
-async def main_async():
-    await asyncio.gather(
-        start_polling(),
-        start_web()
-    )
-
-if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_flask).start()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
