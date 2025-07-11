@@ -47,6 +47,8 @@ def init_db():
             longitude REAL,
             fuel_pulses INTEGER,
             fuel_liters REAL
+            dailyDistance REAL
+            totalDistance REAL
         )
     ''')
     # Налаштування (наприклад, ПІН, нагадування, пробіг)
@@ -75,13 +77,15 @@ def save_telemetry(data):
     c.execute('''
         INSERT INTO telemetry (
             device_id, engine_temperature, air_temperature,
-            latitude, longitude, fuel_pulses, fuel_liters
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            latitude, longitude, fuel_pulses, fuel_liters,
+            dailyDistance, totalDistance
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data.get('device_id'), data.get('engine_temperature'),
         data.get('air_temperature'), data.get('latitude'),
         data.get('longitude'), data.get('fuel_pulses'),
-        data.get('fuel_liters')
+        data.get('fuel_liters'), data.get('dailyDistance'),
+        data.get('totalDistance')
     ))
     conn.commit()
     conn.close()
@@ -103,7 +107,9 @@ def get_last_telemetry():
         "latitude": row[5],
         "longitude": row[6],
         "fuel_pulses": row[7],
-        "fuel_liters": row[8]
+        "fuel_liters": row[8],
+        "dailyDistance": row[9],
+        "totalDistance": row[10]
     }
 
 def add_command(cmd_type, value=""):
@@ -168,13 +174,18 @@ def get_weather(lat, lon):
 
 # ==========  TELEGRAM BOT ==========
 
-START_MENU = [
-    [KeyboardButton("📊 Статус"), KeyboardButton("⛽ Залишок"), KeyboardButton("🛢 Заправився")],
-    [KeyboardButton("🌤 Погода"), KeyboardButton("⚙️ Управління"), KeyboardButton("🧰 ТО")]
+HEAD_MENU = [
+    [KeyboardButton("📊 Статус"), KeyboardButton("🌤 Погода")],
+    [KeyboardButton("⛽️ Дизель"), KeyboardButton("🛵 Пробіг")],
+    [KeyboardButton("⚙️ Управління"), KeyboardButton("🧰 ТО")]
+]
+FUEL_MENU = [
+    [KeyboardButton("🛢 Залишок"), KeyboardButton("⛽ Заправився")],
+    [KeyboardButton("⬅️ Назад")]
 ]
 MANAGE_MENU = [
     [KeyboardButton("🔑 Увімкнути запалення"), KeyboardButton("🗝 Завести двигун")],
-    [KeyboardButton("🛑 Заглушити двигун"), KeyboardButton("🚫 Вимкнути запалення")],
+    [KeyboardButton("🚫 Вимкнути запалення"), KeyboardButton("🛑 Заглушити двигун")],
     [KeyboardButton("⬅️ Назад")]
 ]
 SERVICE_MENU = [
@@ -187,19 +198,19 @@ def make_status_text(data):
     if not data:
         return "❌ Дані ще не надійшли від пристрою."
     text = (
-        f"📊 <b>СТАТУС МОТО:</b>\n"
-        f"🛠 <b>Двигун:</b> {data['engine_temperature']}°C\n"
-        f"🌡 <b>Повітря:</b> {data['air_temperature']}°C\n"
+        f"📊 <b>Статус Honda Shadow:</b>\n"
+        f"🛠 <b>Температура двигуна:</b> {data['engine_temperature']}°C\n"
+        f"🌡 <b>Температура повітря:</b> {data['air_temperature']}°C\n"
         f"⛽ <b>Залишок пального:</b> {data['fuel_liters']} л\n"
-        f"🏁 <b>Координати:</b> {data['latitude']:.5f}, {data['longitude']:.5f}\n"
-        f"📍 <b>Карта:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
+        f"🛵 <b>Пробіг сьогодні: </b> {data['dailyDistance']} км\n"
+        f"📍 <b>GPS:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
     )
     return text
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Вітаю! Я HondaShadow ESP32 бот.\nОбери команду:",
-        reply_markup=ReplyKeyboardMarkup(START_MENU, resize_keyboard=True)
+        "Вітаю! Я HondaShadow ESP32 бот.\nГотовий розпочати:",
+        reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True)
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,15 +269,27 @@ async def service_chain_reset(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text == "📊 Статус":
+    if text == "Старт 🚀":
+        await start(update, context)
+    elif text == "📊 Статус":
         await status(update, context)
-    elif text == "⛽ Залишок":
+    elif text == "🛵 Пробіг":
         data = get_last_telemetry()
         if data:
-            await update.message.reply_text(f"⛽ {data['fuel_liters']} л")
+           await update.message.reply_text(f"⛽️ Загальний пробіг: {data['totalDistance']} л")
+           await update.message.reply_text(f"⛽️ Пробіг сьогодні: {data['dailyDistance']}")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
-    elif text == "🛢 Заправився":
+    elif text == "⛽️ Дизель":
+        await update.message.reply_text("Меню пального:", reply_markup=ReplyKeyboardMarkup(FUEL_MENU, resize_keyboard=True))
+    elif text == "🛢 Залишок":
+        data = get_last_telemetry()
+        if data:
+           await update.message.reply_text(f"⛽️ Дизель: {data['fuel_liters']} л")
+           await update.message.reply_text(f"⛽️ Імпульси: {data['fuel_pulses']}")
+        else:
+            await update.message.reply_text("❌ Дані ще не надійшли.")
+    elif text == "⛽ Заправився":
         await update.message.reply_text("Введіть кількість літрів, наприклад: /refuel 5")
     elif text == "🌤 Погода":
         data = get_last_telemetry()
@@ -280,7 +303,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🧰 ТО":
         await update.message.reply_text("Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
     elif text == "⬅️ Назад":
-        await update.message.reply_text("Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(START_MENU, resize_keyboard=True))
+        await update.message.reply_text("Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True))
     elif text == "🔑 Увімкнути запалення":
         await ignite(update, context)
     elif text == "🗝 Завести двигун":
@@ -364,10 +387,7 @@ def setup_scheduler():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     init_db()
-    # setup_scheduler()
-    print("will send")
-    send_daily_report()
-    print("did send")
+    setup_scheduler()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_app = application
 
