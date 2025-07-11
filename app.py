@@ -45,7 +45,7 @@ def init_db():
             air_temperature REAL,
             latitude REAL,
             longitude REAL,
-            fuel_pulses INTEGER,
+            fuel_pulses REAL,
             fuel_liters REAL
             dailyDistance REAL
             totalDistance REAL
@@ -289,8 +289,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
            await update.message.reply_text(f"⛽️ Імпульси: {data['fuel_pulses']}")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
+    elif context.user_data.get('awaiting_refuel'):
+        try:
+            liters = float(text.replace(',', '.'))  # дозволяємо 1.5 або 1,5
+            add_command("refuel", str(liters))
+            await update.message.reply_text(f"✅ Заправка на {liters} л відправлена пристрою.")
+        except ValueError:
+            await update.message.reply_text("❗️ Невірний формат — введіть число, наприклад: 5 або 1.5")
+        finally:
+            context.user_data.pop('awaiting_refuel', None)
+        return
     elif text == "⛽ Заправився":
-        await update.message.reply_text("Введіть кількість літрів, наприклад: /refuel 5")
+        context.user_data['awaiting_refuel'] = True
+        await update.message.reply_text("Введіть, будь ласка, кількість літрів:")
     elif text == "🌤 Погода":
         data = get_last_telemetry()
         if data:
