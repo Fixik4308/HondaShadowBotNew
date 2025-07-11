@@ -1,6 +1,6 @@
 import os
 import sqlite3
-conn = sqlite3.connect('your_db_file.db')
+conn = sqlite3.connect('hondashadow.db')
 c = conn.cursor()
 c.execute('ALTER TABLE telemetry ADD COLUMN dailyDistance REAL')
 conn.commit()
