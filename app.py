@@ -385,7 +385,8 @@ def setup_scheduler():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     init_db()
-    setup_scheduler()
+    # setup_scheduler()
+    send_daily_report()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_app = application
 
