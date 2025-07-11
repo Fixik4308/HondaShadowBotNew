@@ -81,7 +81,8 @@ def save_telemetry(data):
         data.get('device_id'), data.get('engine_temperature'),
         data.get('air_temperature'), data.get('latitude'),
         data.get('longitude'), data.get('fuel_pulses'),
-        data.get('fuel_liters')
+        data.get('fuel_liters'), data.get('dailyDistance'),
+        data.get('totalDistance')
     ))
     conn.commit()
     conn.close()
@@ -103,7 +104,9 @@ def get_last_telemetry():
         "latitude": row[5],
         "longitude": row[6],
         "fuel_pulses": row[7],
-        "fuel_liters": row[8]
+        "fuel_liters": row[8],
+        "dailyDistance": row[9],
+        "totalDistance": row[10]
     }
 
 def add_command(cmd_type, value=""):
@@ -168,9 +171,6 @@ def get_weather(lat, lon):
 
 # ==========  TELEGRAM BOT ==========
 
-START_MENU = [
-    [KeyboardButton("Старт 🚀")]
-]
 HEAD_MENU = [
     [KeyboardButton("📊 Статус"), KeyboardButton("🌤 Погода")],
     [KeyboardButton("⛽️ Дизель"), KeyboardButton("🛵 Пробіг")],
@@ -200,7 +200,7 @@ def make_status_text(data):
         f"🛠 <b>Температура двигуна:</b> {data['engine_temperature']}°C\n"
         f"🌡 <b>Температура повітря:</b> {data['air_temperature']}°C\n"
         f"⛽ <b>Залишок пального:</b> {data['fuel_liters']} л\n"
-        #f"🛵 <b>Пробіг сьогодні: </b> {data['0']} км\n"  ====================================    ВКАЗАТИ ЗНАЧЕННЯ ПРОБІГУ!!!
+        f"🛵 <b>Пробіг сьогодні: </b> {data['dailyDistance']} км\n"
         f"📍 <b>GPS:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
     )
     return text
@@ -271,8 +271,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
     elif text == "📊 Статус":
         await status(update, context)
-    #elif text == "🛵 Пробіг":
-        #await status(update, context)
+    elif text == "🛵 Пробіг":
+        data = get_last_telemetry()
+        if data:
+           await update.message.reply_text(f"⛽️ Загальний пробіг: {data['totalDistance']} л")
+           await update.message.reply_text(f"⛽️ Пробіг сьогодні: {data['dailyDistance']}")
+        else:
+            await update.message.reply_text("❌ Дані ще не надійшли.")
     elif text == "⛽️ Дизель":
         await update.message.reply_text("Меню пального:", reply_markup=ReplyKeyboardMarkup(FUEL_MENU, resize_keyboard=True))
     elif text == "🛢 Залишок":
@@ -297,8 +302,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
     elif text == "⬅️ Назад":
         await update.message.reply_text("Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True))
-    elif text == "⬅️ Вийти":
-        await update.message.reply_text("Виходжу.", reply_markup=ReplyKeyboardMarkup(START_MENU, resize_keyboard=True))
     elif text == "🔑 Увімкнути запалення":
         await ignite(update, context)
     elif text == "🗝 Завести двигун":
