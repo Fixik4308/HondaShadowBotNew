@@ -276,8 +276,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🛵 Пробіг":
         data = get_last_telemetry()
         if data:
-           await update.message.reply_text(f"⛽️ Загальний пробіг: {data['totalDistance']} л")
-           await update.message.reply_text(f"⛽️ Пробіг сьогодні: {data['dailyDistance']}")
+           await update.message.reply_text(f"🏍 Загальний пробіг: {data['totalDistance']} км")
+           await update.message.reply_text(f"🛵 Пробіг сьогодні: {data['dailyDistance']} км")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
     elif text == "⛽️ Дизель":
