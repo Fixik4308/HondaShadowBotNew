@@ -431,6 +431,7 @@ def setup_scheduler():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     init_db()
+    ensure_telemetry_columns()
     setup_scheduler()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_app = application
