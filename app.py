@@ -46,10 +46,10 @@ def init_db():
             latitude REAL,
             longitude REAL,
             fuel_pulses REAL,
-            fuel_liters REAL
-            dailyDistance REAL
-            totalDistance REAL
-            dailyAvgConsumption REAL
+            fuel_liters REAL,
+            dailyDistance REAL,
+            totalDistance REAL,
+            dailyAvgConsumption REAL,
             totalAvgConsumption REAL
         )
     ''')
