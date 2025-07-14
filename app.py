@@ -49,6 +49,8 @@ def init_db():
             fuel_liters REAL
             dailyDistance REAL
             totalDistance REAL
+            dailyAvgConsumption REAL
+            totalAvgConsumption REAL
         )
     ''')
     # Налаштування (наприклад, ПІН, нагадування, пробіг)
@@ -78,14 +80,16 @@ def save_telemetry(data):
         INSERT INTO telemetry (
             device_id, engine_temperature, air_temperature,
             latitude, longitude, fuel_pulses, fuel_liters,
-            dailyDistance, totalDistance
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            dailyDistance, totalDistance, dailyAvgConsumption,
+            totalAvgConsumption
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data.get('device_id'), data.get('engine_temperature'),
         data.get('air_temperature'), data.get('latitude'),
         data.get('longitude'), data.get('fuel_pulses'),
         data.get('fuel_liters'), data.get('dailyDistance'),
-        data.get('totalDistance')
+        data.get('totalDistance'), data.get('dailyAvgConsumption'),
+        data.get('totalAvgConsumption')
     ))
     conn.commit()
     conn.close()
@@ -109,7 +113,9 @@ def get_last_telemetry():
         "fuel_pulses": row[7],
         "fuel_liters": row[8],
         "dailyDistance": row[9],
-        "totalDistance": row[10]
+        "totalDistance": row[10],
+        "dailyAvgConsumption": row[11],
+        "totalAvgConsumption": row[12]
     }
 
 def add_command(cmd_type, value=""):
@@ -177,7 +183,8 @@ def get_weather(lat, lon):
 HEAD_MENU = [
     [KeyboardButton("📊 Статус"), KeyboardButton("🌤 Погода")],
     [KeyboardButton("⛽️ Дизель"), KeyboardButton("🛵 Пробіг")],
-    [KeyboardButton("⚙️ Управління"), KeyboardButton("🧰 ТО")]
+    [KeyboardButton("⚙️ Управління"), KeyboardButton("🧰 ТО")],
+    [KeyboardButton("🛠 Налаштування")]
 ]
 FUEL_MENU = [
     [KeyboardButton("🛢 Залишок"), KeyboardButton("⛽ Заправився")],
@@ -193,6 +200,9 @@ SERVICE_MENU = [
     [KeyboardButton("✅ Змастив цеп"), KeyboardButton("✅ Замінив масло")],
     [KeyboardButton("⬅️ Назад")]
 ]
+SETTING_MENU = [
+    [KeyboardButton("⬅️ Назад")] # додати функції сну та збросу усіх значень
+]
 
 def make_status_text(data):
     if not data:
@@ -203,6 +213,7 @@ def make_status_text(data):
         f"🌡 <b>Температура повітря:</b> {data['air_temperature']}°C\n"
         f"⛽ <b>Залишок пального:</b> {data['fuel_liters']} л\n"
         f"🛵 <b>Пробіг сьогодні: </b> {data['dailyDistance']} км\n"
+        f"🛢 <b>Середній розхід: </b> {data['totalAvgConsumption']} л/100км\n"
         f"📍 <b>GPS:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
     )
     return text
@@ -280,13 +291,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
            await update.message.reply_text(f"🛵 Пробіг сьогодні: {data['dailyDistance']} км")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
-    elif text == "⛽️ Дизель":
+    elif text == "⛽️ Дизель": 
         await update.message.reply_text("Меню пального:", reply_markup=ReplyKeyboardMarkup(FUEL_MENU, resize_keyboard=True))
     elif text == "🛢 Залишок":
         data = get_last_telemetry()
         if data:
-           await update.message.reply_text(f"⛽️ Дизель: {data['fuel_liters']} л")
-           await update.message.reply_text(f"⛽️ Імпульси: {data['fuel_pulses']}")
+           await update.message.reply_text(f"🛢 Дизель: {data['fuel_liters']} л")
+           await update.message.reply_text(f"⚡️ Імпульси: {data['fuel_pulses']}")
+           await update.message.reply_text(f"⛽️ Середній розхід: {data['totalAvgConsumption']} л/100 км")
+           await update.message.reply_text(f"⛽️ Середній розхід сьогодні: {data['dailyAvgConsumption']} л/100 км")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
     elif context.user_data.get('awaiting_refuel'):
@@ -311,6 +324,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Дані ще не надійшли.")
     elif text == "⚙️ Управління":
         await update.message.reply_text("Меню керування:", reply_markup=ReplyKeyboardMarkup(MANAGE_MENU, resize_keyboard=True))
+    elif text == "🛠 Налаштування":
+        await update.message.reply_text("Меню керування:", reply_markup=ReplyKeyboardMarkup(SETTING_MENU, resize_keyboard=True))
     elif text == "🧰 ТО":
         await update.message.reply_text("Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
     elif text == "⬅️ Назад":
