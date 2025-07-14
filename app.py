@@ -73,6 +73,24 @@ def init_db():
     conn.commit()
     conn.close()
 
+def ensure_telemetry_columns():
+    required_cols = {
+        'dailyDistance': 'REAL',
+        'totalDistance': 'REAL',
+        'dailyAvgConsumption': 'REAL',
+        'totalAvgConsumption': 'REAL',
+    }
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(telemetry)")
+    columns = [row[1] for row in c.fetchall()]
+    for col, col_type in required_cols.items():
+        if col not in columns:
+            print(f"Adding column {col} ({col_type})")
+            c.execute(f"ALTER TABLE telemetry ADD COLUMN {col} {col_type}")
+    conn.commit()
+    conn.close()
+
 def save_telemetry(data):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
