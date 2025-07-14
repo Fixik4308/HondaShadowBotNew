@@ -50,7 +50,10 @@ def init_db():
             dailyDistance REAL,
             totalDistance REAL,
             dailyAvgConsumption REAL,
-            totalAvgConsumption REAL
+            totalAvgConsumption REAL,
+            distanceRemCharge REAL,
+            batteryVoltage REAL,
+            batteryAkkVoltage REAL
         )
     ''')
     # Налаштування (наприклад, ПІН, нагадування, пробіг)
@@ -79,6 +82,9 @@ def ensure_telemetry_columns():
         'totalDistance': 'REAL',
         'dailyAvgConsumption': 'REAL',
         'totalAvgConsumption': 'REAL',
+        'distanceRemCharge': 'REAL',
+        'batteryVoltage': 'REAL',
+        'batteryAkkVoltage': 'REAL',
     }
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -99,15 +105,17 @@ def save_telemetry(data):
             device_id, engine_temperature, air_temperature,
             latitude, longitude, fuel_pulses, fuel_liters,
             dailyDistance, totalDistance, dailyAvgConsumption,
-            totalAvgConsumption
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            totalAvgConsumption, distanceRemCharge, batteryVoltage,
+            batteryAkkVoltage
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data.get('device_id'), data.get('engine_temperature'),
         data.get('air_temperature'), data.get('latitude'),
         data.get('longitude'), data.get('fuel_pulses'),
         data.get('fuel_liters'), data.get('dailyDistance'),
         data.get('totalDistance'), data.get('dailyAvgConsumption'),
-        data.get('totalAvgConsumption')
+        data.get('totalAvgConsumption'), data.get('distanceRemCharge'),
+        data.get('batteryVoltage'), data.get('batteryAkkVoltage')
     ))
     conn.commit()
     conn.close()
@@ -133,7 +141,10 @@ def get_last_telemetry():
         "dailyDistance": row[9],
         "totalDistance": row[10],
         "dailyAvgConsumption": row[11],
-        "totalAvgConsumption": row[12]
+        "totalAvgConsumption": row[12],
+        "distanceRemCharge": row[13],
+        "batteryVoltage": row[14],
+        "batteryAkkVoltage": row[15]
     }
 
 def add_command(cmd_type, value=""):
@@ -227,11 +238,14 @@ def make_status_text(data):
         return "❌ Дані ще не надійшли від пристрою."
     text = (
         f"📊 <b>Статус Honda Shadow:</b>\n"
+        f"\n"
         f"🛠 <b>Температура двигуна:</b> {data['engine_temperature']}°C\n"
         f"🌡 <b>Температура повітря:</b> {data['air_temperature']}°C\n"
+        f"⚡️ <b>Заряд акумулятора:</b> {data['batteryAkkVoltage']} V <b>Заряд 18650:</b> {data['batteryVoltage']} V\n"
         f"⛽ <b>Залишок пального:</b> {data['fuel_liters']} л\n"
         f"🛵 <b>Пробіг сьогодні: </b> {data['dailyDistance']} км\n"
         f"🛢 <b>Середній розхід: </b> {data['totalAvgConsumption']} л/100км\n"
+        f"🛣 <b>Проїхати можна ще: </b> {data['distanceRemCharge']} км\n"
         f"📍 <b>GPS:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
     )
     return text
@@ -318,6 +332,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
            await update.message.reply_text(f"⚡️ Імпульси: {data['fuel_pulses']}")
            await update.message.reply_text(f"⛽️ Середній розхід: {data['totalAvgConsumption']} л/100 км")
            await update.message.reply_text(f"⛽️ Середній розхід сьогодні: {data['dailyAvgConsumption']} л/100 км")
+           await update.message.reply_text(f"🛣 Проїхати можна ще: {data['distanceRemCharge']} км")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
     elif context.user_data.get('awaiting_refuel'):
