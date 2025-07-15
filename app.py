@@ -53,7 +53,9 @@ def init_db():
             totalAvgConsumption REAL,
             distanceRemCharge REAL,
             batteryVoltage REAL,
-            batteryAkkVoltage REAL
+            batteryAkkVoltage REAL,
+            chainServiceLeft REAL,
+            oilServiceLeft REAL
         )
     ''')
     # Налаштування (наприклад, ПІН, нагадування, пробіг)
@@ -85,6 +87,8 @@ def ensure_telemetry_columns():
         'distanceRemCharge': 'REAL',
         'batteryVoltage': 'REAL',
         'batteryAkkVoltage': 'REAL',
+        'chainServiceLeft': 'REAL',
+        'oilServiceLeft': 'REAL',
     }
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -106,8 +110,8 @@ def save_telemetry(data):
             latitude, longitude, fuel_pulses, fuel_liters,
             dailyDistance, totalDistance, dailyAvgConsumption,
             totalAvgConsumption, distanceRemCharge, batteryVoltage,
-            batteryAkkVoltage
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            batteryAkkVoltage, chainServiceLeft, oilServiceLeft
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data.get('device_id'), data.get('engine_temperature'),
         data.get('air_temperature'), data.get('latitude'),
@@ -115,7 +119,8 @@ def save_telemetry(data):
         data.get('fuel_liters'), data.get('dailyDistance'),
         data.get('totalDistance'), data.get('dailyAvgConsumption'),
         data.get('totalAvgConsumption'), data.get('distanceRemCharge'),
-        data.get('batteryVoltage'), data.get('batteryAkkVoltage')
+        data.get('batteryVoltage'), data.get('batteryAkkVoltage'),
+        data.get('chainServiceLeft'), data.get('oilServiceLeft')
     ))
     conn.commit()
     conn.close()
@@ -144,7 +149,9 @@ def get_last_telemetry():
         "totalAvgConsumption": row[12],
         "distanceRemCharge": row[13],
         "batteryVoltage": row[14],
-        "batteryAkkVoltage": row[15]
+        "batteryAkkVoltage": row[15],
+        "chainServiceLeft": row[16],
+        "oilServiceLeft": row[17]
     }
 
 def add_command(cmd_type, value=""):
@@ -416,13 +423,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_command("stop_ignition")
         await update.message.reply_text("✅ Запалення вимкнено.")
     elif text == "ℹ️ Нагадування":
-        oil = get_setting('oil_last_reset', 'Ніколи')
-        chain = get_setting('chain_last_reset', 'Ніколи')
-        await update.message.reply_text(f"🛢 Остання заміна масла: {oil}\n🔗 Остання мастка ланцюга: {chain}")
+        data = get_last_telemetry()
+        if data:
+            oil_left = data.get('oilServiceLeft')
+            chain_left = data.get('chainServiceLeft')
+            await update.message.reply_text(
+                f"🔗 До мастки ланцюга: {int(chain_left)} км\n🛢 До заміни масла: {int(oil_left)} км"
+            )
+        else:
+            await update.message.reply_text("❌ Дані ще не надійшли.")
     elif text == "✅ Змастив цеп":
-        await service_chain_reset(update, context)
+        add_command("reset_chain")
+        await update.message.reply_text("✅ Лічильник ланцюга скинуто!")
     elif text == "✅ Замінив масло":
-        await service_oil_reset(update, context)
+        add_command("reset_oil")
+        await update.message.reply_text("✅ Лічильник масла скинуто!")
     else:
         if context.user_data.get('awaiting_pin'):
             pin_action = context.user_data.pop('awaiting_pin')
@@ -471,13 +486,14 @@ def send_daily_report():
     data = get_last_telemetry()
     if data:
         weather = get_weather(data['latitude'], data['longitude'])
-        oil = get_setting('oil_last_reset', 'Ніколи')
-        chain = get_setting('chain_last_reset', 'Ніколи')
+        chain_left = int(data.get('chainServiceLeft', 0))
+        oil_left = int(data.get('oilServiceLeft', 0))
         text = (
             "🕊 <b>Щоденний звіт</b>\n"
             + make_status_text(data) + "\n\n"
             + weather + "\n\n"
-            + f"🛢 Остання заміна масла: {oil}\n🔗 Остання мастка ланцюга: {chain}"
+            + f"🔗 До мастки ланцюга: {chain_left} км\n"
+            + f"🛢 До заміни масла: {oil_left} км"
         )
         try:
             import asyncio
