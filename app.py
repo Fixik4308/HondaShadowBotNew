@@ -230,7 +230,8 @@ SERVICE_MENU = [
     [KeyboardButton("⬅️ Назад")]
 ]
 SETTING_MENU = [
-    [KeyboardButton("⬅️ Назад")] # додати функції сну та збросу усіх значень
+    [KeyboardButton("🧮 Обнулити лічильники")],
+    [KeyboardButton("⬅️ Назад")] # додати функції сну
 ]
 
 def make_status_text(data):
@@ -271,6 +272,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ignite — Запалення (ПІН)\n"
         "/starter — Стартер (ПІН)\n"
         "/stop — Вимкнути все\n"
+        "/reset_all — Зброс(ПІН)\n"
         "/help — Список команд"
     )
 
@@ -305,6 +307,10 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_command("stop_ignition")
     add_command("stop_starter")
     await update.message.reply_text("✅ Відправлено: вимкнення запалення та стартера.")
+
+async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введіть PIN для збросу значень:")
+    context.user_data['awaiting_pin'] = 'reset_all'
 
 async def service_oil_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_setting('oil_last_reset', datetime.now(pytz.timezone(TIMEZONE)).isoformat())
@@ -367,6 +373,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
     elif text == "⬅️ Назад":
         await update.message.reply_text("Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True))
+    elif text == "🧮 Обнулити лічильники":
+        await reset_all(update, context)
     elif text == "🔑 Увімкнути запалення":
         await ignite(update, context)
     elif text == "🗝 Завести двигун":
@@ -393,6 +401,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text("✅ Запалення ввімкнено!")
                 elif pin_action == 'starter':
                     add_command("start_starter", MASTER_PIN)
+                    await update.message.reply_text("✅ Стартер ввімкнено!")
+                elif pin_action == 'reset_all':
+                    add_command("reset_all", MASTER_PIN)
                     await update.message.reply_text("✅ Стартер ввімкнено!")
             else:
                 await update.message.reply_text("❌ Невірний PIN.")
@@ -464,6 +475,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("ignite", ignite))
     application.add_handler(CommandHandler("starter", starter))
     application.add_handler(CommandHandler("stop", stop))
+    application.add_handler(CommandHandler("reset_all", reset_all))
     application.add_handler(CommandHandler("service_oil_reset", service_oil_reset))
     application.add_handler(CommandHandler("service_chain_reset", service_chain_reset))
     application.add_handler(MessageHandler(filters.TEXT, handle_message))
