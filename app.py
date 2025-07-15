@@ -239,13 +239,17 @@ def make_status_text(data):
     text = (
         f"📊 <b>Статус Honda Shadow:</b>\n"
         f"\n"
-        f"🛠 <b>Температура двигуна:</b> {data['engine_temperature']}°C\n"
-        f"🌡 <b>Температура повітря:</b> {data['air_temperature']}°C\n"
-        f"⚡️ <b>Заряд акумулятора:</b> {data['batteryAkkVoltage']} V <b>Заряд 18650:</b> {data['batteryVoltage']} V\n"
-        f"⛽ <b>Залишок пального:</b> {data['fuel_liters']} л\n"
-        f"🛵 <b>Пробіг сьогодні: </b> {data['dailyDistance']} км\n"
-        f"🛢 <b>Середній розхід: </b> {data['totalAvgConsumption']} л/100км\n"
-        f"🛣 <b>Проїхати можна ще: </b> {data['distanceRemCharge']} км\n"
+        f"🛠 <b>Температура двигуна:</b> {data['engine_temperature']:.1f}°C\n"
+        f"🌡 <b>Температура повітря:</b> {data['air_temperature']:.1f}°C\n"
+        f"\n"
+        f"⚡️ <b>Заряд акумулятора:</b> {data['batteryAkkVoltage']:.2f} V\n"
+        f"⚡️ <b>Заряд 18650:</b> {data['batteryVoltage']:.2f} V\n"
+        f"\n"
+        f"⛽ <b>Залишок пального:</b> {data['fuel_liters']:.2f} л\n"
+        f"🛵 <b>Пробіг сьогодні: </b> {data['dailyDistance']:.2f} км\n"
+        f"🛢 <b>Середній розхід: </b> {data['totalAvgConsumption']:.2f} л/100км\n"
+        f"🛣 <b>Проїхати можна ще: </b> {data['distanceRemCharge']:.2f} км\n"
+        f"\n"
         f"📍 <b>GPS:</b> https://maps.google.com/?q={data['latitude']},{data['longitude']}"
     )
     return text
@@ -319,8 +323,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🛵 Пробіг":
         data = get_last_telemetry()
         if data:
-           await update.message.reply_text(f"🏍 Загальний пробіг: {data['totalDistance']} км")
-           await update.message.reply_text(f"🛵 Пробіг сьогодні: {data['dailyDistance']} км")
+           await update.message.reply_text(f"🏍 Загальний пробіг: {data['totalDistance']:.2f} км")
+           await update.message.reply_text(f"🛵 Пробіг сьогодні: {data['dailyDistance']:.2f} км")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
     elif text == "⛽️ Дизель": 
@@ -328,11 +332,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🛢 Залишок":
         data = get_last_telemetry()
         if data:
-           await update.message.reply_text(f"🛢 Дизель: {data['fuel_liters']} л")
+           await update.message.reply_text(f"🛢 Дизель: {data['fuel_liters']:.2f} л")
            await update.message.reply_text(f"⚡️ Імпульси: {data['fuel_pulses']}")
-           await update.message.reply_text(f"⛽️ Середній розхід: {data['totalAvgConsumption']} л/100 км")
-           await update.message.reply_text(f"⛽️ Середній розхід сьогодні: {data['dailyAvgConsumption']} л/100 км")
-           await update.message.reply_text(f"🛣 Проїхати можна ще: {data['distanceRemCharge']} км")
+           await update.message.reply_text(f"⛽️ Середній розхід: {data['totalAvgConsumption']:.2f} л/100 км")
+           await update.message.reply_text(f"⛽️ Середній розхід сьогодні: {data['dailyAvgConsumption']:.2f} л/100 км")
+           await update.message.reply_text(f"🛣 Проїхати можна ще: {data['distanceRemCharge']:.2f} км")
         else:
             await update.message.reply_text("❌ Дані ще не надійшли.")
     elif context.user_data.get('awaiting_refuel'):
