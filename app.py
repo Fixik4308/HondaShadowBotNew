@@ -263,12 +263,14 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-async def reply_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, html: bool = False, **kwargs):
+async def reply_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, html: bool = False, delete_user_msg=False, **kwargs):
     if html:
         msg = await update.message.reply_html(text, **kwargs)
     else:
         msg = await update.message.reply_text(text, **kwargs)
     context.job_queue.run_once(delete_message_job, when=300, data=(msg.chat_id, msg.message_id))
+    if delete_user_msg:
+        context.job_queue.run_once(delete_message_job, when=5, data=(update.message.chat_id, update.message.message_id))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text( 
@@ -290,17 +292,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reset_all — Зброс(ПІН)\n"
         "/power_save_on — Увімкнути енергозберігаючий режим(ПІН)\n"
         "/power_save_off — Вимкнути енергозберігаючий режим(ПІН)\n"
-        "/help — Список команд"
+        "/help — Список команд", delete_user_msg=True
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = get_last_telemetry()
-    await reply_and_delete(update, context, make_status_text(data), html=True)
+    await reply_and_delete(update, context, make_status_text(data), html=True, delete_user_msg=True)
 
 async def location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = get_last_telemetry()
     if not data:
-        await reply_and_delete(update, context, "❌ Дані ще не надійшли.")
+        await reply_and_delete(update, context, "❌ Дані ще не надійшли.", delete_user_msg=True)
         return
     await update.message.reply_location(data['latitude'], data['longitude'])
 
@@ -308,42 +310,42 @@ async def refuel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         liters = float(context.args[0])
         add_command("refuel", str(liters))
-        await reply_and_delete(update, context, f"✅ Заправка на {liters} л відправлена пристрою.")
+        await reply_and_delete(update, context, f"✅ Заправка на {liters} л відправлена пристрою.", delete_user_msg=True)
     except Exception:
-        await reply_and_delete(update, context, "❗️ Використання: /refuel 5")
+        await reply_and_delete(update, context, "❗️ Використання: /refuel 5", delete_user_msg=True)
 
 async def ignite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await reply_and_delete(update, context, "Введіть PIN для запуску запалення:")
+    await reply_and_delete(update, context, "Введіть PIN для запуску запалення:", delete_user_msg=True)
     context.user_data['awaiting_pin'] = 'ignite'
 
 async def starter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await reply_and_delete(update, context, "Введіть PIN для запуску стартера:")
+    await reply_and_delete(update, context, "Введіть PIN для запуску стартера:", delete_user_msg=True)
     context.user_data['awaiting_pin'] = 'starter'
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_command("stop_ignition")
     add_command("stop_starter")
-    await reply_and_delete(update, context, "✅ Відправлено: вимкнення запалення та стартера.")
+    await reply_and_delete(update, context, "✅ Відправлено: вимкнення запалення та стартера.", delete_user_msg=True)
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await reply_and_delete(update, context, "Введіть PIN для збросу значень:")
+    await reply_and_delete(update, context, "Введіть PIN для збросу значень:", delete_user_msg=True)
     context.user_data['awaiting_pin'] = 'reset_all'
 
 async def power_save_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await reply_and_delete(update, context, "Введіть PIN для увімкнення енергозберігаючого режиму:")
+    await reply_and_delete(update, context, "Введіть PIN для увімкнення енергозберігаючого режиму:", delete_user_msg=True)
     context.user_data['awaiting_pin'] = 'power_save_on'
 
 async def power_save_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await reply_and_delete(update, context, "Введіть PIN для вимкнення енергозберігаючого режиму:")
+    await reply_and_delete(update, context, "Введіть PIN для вимкнення енергозберігаючого режиму:", delete_user_msg=True)
     context.user_data['awaiting_pin'] = 'power_save_off'
 
 async def service_oil_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_setting('oil_last_reset', datetime.now(pytz.timezone(TIMEZONE)).isoformat())
-    await reply_and_delete(update, context, "✅ Лічильник масла скинуто!")
+    await reply_and_delete(update, context, "✅ Лічильник масла скинуто!", delete_user_msg=True)
 
 async def service_chain_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_setting('chain_last_reset', datetime.now(pytz.timezone(TIMEZONE)).isoformat())
-    await reply_and_delete(update, context, "✅ Лічильник ланцюга скинуто!")
+    await reply_and_delete(update, context, "✅ Лічильник ланцюга скинуто!", delete_user_msg=True)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -354,50 +356,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🛵 Пробіг":
         data = get_last_telemetry()
         if data:
-           await reply_and_delete(update, context, f"🏍 Загальний пробіг: {data['totalDistance']:.2f} км")
-           await reply_and_delete(update, context, f"🛵 Пробіг сьогодні: {data['dailyDistance']:.2f} км")
+           await reply_and_delete(update, context, f"🏍 Загальний пробіг: {data['totalDistance']:.2f} км", delete_user_msg=True)
+           await reply_and_delete(update, context, f"🛵 Пробіг сьогодні: {data['dailyDistance']:.2f} км", delete_user_msg=True)
         else:
-            await reply_and_delete(update, context, "❌ Дані ще не надійшли.")
+            await reply_and_delete(update, context, "❌ Дані ще не надійшли.", delete_user_msg=True)
     elif text == "⛽️ Дизель": 
-        await reply_and_delete(update, context, "Меню пального:", reply_markup=ReplyKeyboardMarkup(FUEL_MENU, resize_keyboard=True))
+        await update.message.reply_text("Меню пального:", reply_markup=ReplyKeyboardMarkup(FUEL_MENU, resize_keyboard=True))
     elif text == "🛢 Залишок":
         data = get_last_telemetry()
         if data:
-           await reply_and_delete(update, context, f"🛢 Дизель: {data['fuel_liters']:.2f} л")
-           await reply_and_delete(update, context, f"⚡️ Імпульси: {data['fuel_pulses']}")
-           await reply_and_delete(update, context, f"⛽️ Середній розхід: {data['totalAvgConsumption']:.2f} л/100 км")
-           await reply_and_delete(update, context, f"⛽️ Середній розхід сьогодні: {data['dailyAvgConsumption']:.2f} л/100 км")
-           await reply_and_delete(update, context, f"🛣 Проїхати можна ще: {data['distanceRemCharge']:.2f} км")
+           await reply_and_delete(update, context, f"🛢 Дизель: {data['fuel_liters']:.2f} л", delete_user_msg=True)
+           await reply_and_delete(update, context, f"⚡️ Імпульси: {data['fuel_pulses']}", delete_user_msg=True)
+           await reply_and_delete(update, context, f"⛽️ Середній розхід: {data['totalAvgConsumption']:.2f} л/100 км", delete_user_msg=True)
+           await reply_and_delete(update, context, f"⛽️ Середній розхід сьогодні: {data['dailyAvgConsumption']:.2f} л/100 км", delete_user_msg=True)
+           await reply_and_delete(update, context, f"🛣 Проїхати можна ще: {data['distanceRemCharge']:.2f} км", delete_user_msg=True)
         else:
-            await reply_and_delete(update, context, "❌ Дані ще не надійшли.")
+            await reply_and_delete(update, context, "❌ Дані ще не надійшли.", delete_user_msg=True)
     elif context.user_data.get('awaiting_refuel'):
         try:
             liters = float(text.replace(',', '.'))  # дозволяємо 1.5 або 1,5
             add_command("refuel", str(liters))
-            await reply_and_delete(update, context, f"✅ Заправка на {liters} л відправлена пристрою.")
+            await reply_and_delete(update, context, f"✅ Заправка на {liters} л відправлена пристрою.", delete_user_msg=True)
         except ValueError:
-            await reply_and_delete(update, context, "❗️ Невірний формат — введіть число, наприклад: 5 або 1.5")
+            await reply_and_delete(update, context, "❗️ Невірний формат — введіть число, наприклад: 5 або 1.5", delete_user_msg=True)
         finally:
             context.user_data.pop('awaiting_refuel', None)
         return
     elif text == "⛽ Заправився":
         context.user_data['awaiting_refuel'] = True
-        await reply_and_delete(update, context, "Введіть, будь ласка, кількість літрів:")
+        await reply_and_delete(update, context, "Введіть, будь ласка, кількість літрів:", delete_user_msg=True)
     elif text == "🌤 Погода":
         data = get_last_telemetry()
         if data:
             weather = get_weather(data['latitude'], data['longitude'])
-            await reply_and_delete(update, context, weather)
+            await reply_and_delete(update, context, weather, delete_user_msg=True)
         else:
-            await reply_and_delete(update, context, "❌ Дані ще не надійшли.")
+            await reply_and_delete(update, context, "❌ Дані ще не надійшли.", delete_user_msg=True)
     elif text == "⚙️ Управління":
-        await reply_and_delete(update, context, "Меню керування:", reply_markup=ReplyKeyboardMarkup(MANAGE_MENU, resize_keyboard=True))
+        await update.message.reply_text("Меню керування:", reply_markup=ReplyKeyboardMarkup(MANAGE_MENU, resize_keyboard=True))
     elif text == "🛠 Налаштування":
-        await reply_and_delete(update, context, "Меню керування:", reply_markup=ReplyKeyboardMarkup(SETTING_MENU, resize_keyboard=True))
+        await update.message.reply_text("Меню керування:", reply_markup=ReplyKeyboardMarkup(SETTING_MENU, resize_keyboard=True))
     elif text == "🧰 ТО":
-        await reply_and_delete(update, context, "Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
+        await update.message.reply_text("Меню ТО:", reply_markup=ReplyKeyboardMarkup(SERVICE_MENU, resize_keyboard=True))
     elif text == "⬅️ Назад":
-        await reply_and_delete(update, context, "Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True))
+        await update.message.reply_text("Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True))
     elif text == "🧮 Обнулити лічильники":
         await reset_all(update, context)
     elif text == "🌚 Енергозберігаючий режим":
@@ -412,11 +414,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await stop(update, context)
     elif text == "🚫 Вимкнути запалення":
         add_command("stop_ignition")
-        await reply_and_delete(update, context, "✅ Запалення вимкнено.")
+        await reply_and_delete(update, context, "✅ Запалення вимкнено.", delete_user_msg=True)
     elif text == "ℹ️ Нагадування":
         oil = get_setting('oil_last_reset', 'Ніколи')
         chain = get_setting('chain_last_reset', 'Ніколи')
-        await reply_and_delete(update, context, f"🛢 Остання заміна масла: {oil}\n🔗 Остання мастка ланцюга: {chain}")
+        await reply_and_delete(update, context, f"🛢 Остання заміна масла: {oil}\n🔗 Остання мастка ланцюга: {chain}", delete_user_msg=True)
     elif text == "✅ Змастив цеп":
         await service_chain_reset(update, context)
     elif text == "✅ Замінив масло":
@@ -427,23 +429,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if text.strip() == MASTER_PIN:
                 if pin_action == 'ignite':
                     add_command("start_ignition", MASTER_PIN)
-                    await reply_and_delete(update, context, "✅ Запалення ввімкнено!")
+                    await reply_and_delete(update, context, "✅ Запалення ввімкнено!", delete_user_msg=True)
                 elif pin_action == 'starter':
                     add_command("start_starter", MASTER_PIN)
-                    await reply_and_delete(update, context, "✅ Стартер ввімкнено!")
+                    await reply_and_delete(update, context, "✅ Стартер ввімкнено!", delete_user_msg=True)
                 elif pin_action == 'reset_all':
                     add_command("reset_all", MASTER_PIN)
-                    await reply_and_delete(update, context, "✅ Лічильники скинуто!")
+                    await reply_and_delete(update, context, "✅ Лічильники скинуто!", delete_user_msg=True)
                 elif pin_action == 'power_save_on':
                     add_command("power_save_on", MASTER_PIN)
-                    await reply_and_delete(update, context, "✅ Спимо!")
+                    await reply_and_delete(update, context, "✅ Спимо!", delete_user_msg=True)
                 elif pin_action == 'power_save_off':
                     add_command("power_save_off", MASTER_PIN)
-                    await reply_and_delete(update, context, "✅ Прокинулась!")
+                    await reply_and_delete(update, context, "✅ Прокинулась!", delete_user_msg=True)
             else:
-                await reply_and_delete(update, context, "❌ Невірний PIN.")
+                await reply_and_delete(update, context, "❌ Невірний PIN.", delete_user_msg=True)
         else:
-            await reply_and_delete(update, context, "❓ Невідома команда. Спробуйте /help")
+            await reply_and_delete(update, context, "❓ Невідома команда. Спробуйте /help", delete_user_msg=True)
 
 # ==========  ESP32 API ==========
 @app.route('/esp32_push', methods=['POST'])
