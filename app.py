@@ -231,7 +231,8 @@ SERVICE_MENU = [
 ]
 SETTING_MENU = [
     [KeyboardButton("🧮 Обнулити лічильники")],
-    [KeyboardButton("⬅️ Назад")] # додати функції сну
+    [KeyboardButton("🌚 Енергозберігаючий режим"), KeyboardButton("🌞 Пробудження")],
+    [KeyboardButton("⬅️ Назад")]
 ]
 
 def make_status_text(data):
@@ -287,6 +288,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/starter — Стартер (ПІН)\n"
         "/stop — Вимкнути все\n"
         "/reset_all — Зброс(ПІН)\n"
+        "/power_save_on — Увімкнути енергозберігаючий режим(ПІН)\n"
+        "/power_save_off — Вимкнути енергозберігаючий режим(ПІН)\n"
         "/help — Список команд"
     )
 
@@ -325,6 +328,14 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply_and_delete(update, context, "Введіть PIN для збросу значень:")
     context.user_data['awaiting_pin'] = 'reset_all'
+
+async def power_save_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await reply_and_delete(update, context, "Введіть PIN для увімкнення енергозберігаючого режиму:")
+    context.user_data['awaiting_pin'] = 'power_save_on'
+
+async def power_save_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await reply_and_delete(update, context, "Введіть PIN для вимкнення енергозберігаючого режиму:")
+    context.user_data['awaiting_pin'] = 'power_save_off'
 
 async def service_oil_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_setting('oil_last_reset', datetime.now(pytz.timezone(TIMEZONE)).isoformat())
@@ -389,6 +400,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_and_delete(update, context, "Повертаюся в головне меню.", reply_markup=ReplyKeyboardMarkup(HEAD_MENU, resize_keyboard=True))
     elif text == "🧮 Обнулити лічильники":
         await reset_all(update, context)
+    elif text == "🌚 Енергозберігаючий режим":
+        await power_save_on(update, context)
+    elif text == "🌞 Пробудження":
+        await power_save_off(update, context)
     elif text == "🔑 Увімкнути запалення":
         await ignite(update, context)
     elif text == "🗝 Завести двигун":
@@ -419,6 +434,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif pin_action == 'reset_all':
                     add_command("reset_all", MASTER_PIN)
                     await reply_and_delete(update, context, "✅ Лічильники скинуто!")
+                elif pin_action == 'power_save_on':
+                    add_command("power_save_on", MASTER_PIN)
+                    await reply_and_delete(update, context, "✅ Спимо!")
+                elif pin_action == 'power_save_off':
+                    add_command("power_save_off", MASTER_PIN)
+                    await reply_and_delete(update, context, "✅ Прокинулась!")
             else:
                 await reply_and_delete(update, context, "❌ Невірний PIN.")
         else:
@@ -490,6 +511,8 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("starter", starter))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("reset_all", reset_all))
+    application.add_handler(CommandHandler("power_save_on", power_save_on))
+    application.add_handler(CommandHandler("power_save_off", power_save_off))
     application.add_handler(CommandHandler("service_oil_reset", service_oil_reset))
     application.add_handler(CommandHandler("service_chain_reset", service_chain_reset))
     application.add_handler(MessageHandler(filters.TEXT, handle_message))
