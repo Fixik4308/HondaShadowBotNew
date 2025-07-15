@@ -263,11 +263,11 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-async def reply_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, html: bool = False):
+async def reply_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, html: bool = False, **kwargs):
     if html:
-        msg = await update.message.reply_html(text)
+        msg = await update.message.reply_html(text, **kwargs)
     else:
-        msg = await update.message.reply_text(text)
+        msg = await update.message.reply_text(text, **kwargs)
     context.job_queue.run_once(delete_message_job, when=300, data=(msg.chat_id, msg.message_id))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
