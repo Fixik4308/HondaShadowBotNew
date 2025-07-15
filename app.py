@@ -268,7 +268,7 @@ async def reply_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         msg = await update.message.reply_html(text, **kwargs)
     else:
         msg = await update.message.reply_text(text, **kwargs)
-    context.job_queue.run_once(delete_message_job, when=30, data=(msg.chat_id, msg.message_id))
+    context.job_queue.run_once(delete_message_job, when=5, data=(msg.chat_id, msg.message_id))
     if delete_user_msg:
         context.job_queue.run_once(delete_message_job, when=5, data=(update.message.chat_id, update.message.message_id))
 
