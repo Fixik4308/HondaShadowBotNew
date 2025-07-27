@@ -248,8 +248,8 @@ def make_status_text(data):
     text = (
         f"📊 <b>Статус Honda Shadow:</b>\n"
         f"\n"
-        f"🛠 <b>Температура двигуна:</b> {data['engine_temperature']:.1f}°C\n"
-        f"🌡 <b>Температура повітря:</b> {data['air_temperature']:.1f}°C\n"
+        f"🛠 <b>Температура двигуна:</b> {data['air_temperature']:.1f}°C\n"
+        f"🌡 <b>Температура повітря:</b> {data['engine_temperature']:.1f}°C\n"
         f"\n"
         f"⚡️ <b>Заряд акумулятора:</b> {data['batteryAkkVoltage']:.2f} V\n"
         f"⚡️ <b>Заряд 18650:</b> {data['batteryVoltage']:.2f} V\n"
